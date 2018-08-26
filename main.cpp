@@ -9,14 +9,17 @@
 
 #include "VPK.h"
 
+std::string archivename;
 VPKArchive *archive;
 struct stat vpkstat;
 
+// called when filesystem starts, setup some fuse flags here
 static void *vpk_init(struct fuse_conn_info *conn, struct fuse_config *cfg) {
   cfg->kernel_cache = true;
   return nullptr;
 }
 
+// host wants file/folder attributes
 static int vpk_getattr(const char *path, struct stat *st, struct fuse_file_info *fi) {
   st->st_uid = getuid();
   st->st_gid = getgid();
@@ -47,6 +50,7 @@ static int vpk_getattr(const char *path, struct stat *st, struct fuse_file_info 
   return -ENOENT;
 }
 
+// host wants to open a file (use this to search tree)
 static int vpk_open(const char *path, struct fuse_file_info *fi) {
   std::cout << "Fuse open: " << path << std::endl;
   Entry *packedfile = findFile(&path[1], archive);
@@ -56,6 +60,7 @@ static int vpk_open(const char *path, struct fuse_file_info *fi) {
   return 0;
 }
 
+// host wants to read bytes from a file
 static int vpk_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi) {
   Entry *packedfile;
   if (fi != nullptr) packedfile = reinterpret_cast<Entry*>(fi->fh);
@@ -66,6 +71,7 @@ static int vpk_read(const char *path, char *buffer, size_t size, off_t offset, s
   return read;
 }
 
+// hosts wants to list a folder
 static int vpk_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi, enum fuse_readdir_flags) {
   std::cout << "Fuse readdir: " << path << std::endl;
   if (strcmp(path, "/") == 0) { // list all top level folders
@@ -97,29 +103,37 @@ static struct fuse_operations vpk_ops = {
     .init = vpk_init,
 };
 
+// function to extract the name of the archive from the arguments
 static int vpk_arg_parse(void *data, const char *arg, int key, struct fuse_args *outargs) {
-  if (key == FUSE_OPT_KEY_NONOPT && archive == nullptr) {
-    try {
-      std::cout << "FuseVPK loading archive " << arg << std::endl;
-      archive = loadFile(arg);
-      stat(arg, &vpkstat);
-      return 0;
-    } catch (std::runtime_error &e) {
-      std::cerr << "Failed to load archive: " << e.what() << std::endl;
-      exit(0);
-    }
+  if (key == FUSE_OPT_KEY_NONOPT && archivename == "") {
+    archivename = arg;
+    return 0;
   }
   return 1;
 }
 
+// parses arguments, loads archive, hooks fuse
 int main(int argc, char *argv[]) {
 
   std::cout << "FuseVPK starting" << std::endl;
   vpk_args = FUSE_ARGS_INIT(argc, argv);
   fuse_opt_parse(&vpk_args, nullptr, nullptr, vpk_arg_parse);
 
+  std::cout << "FuseVPK loading vpk: " << archivename << std::endl;
+  try {
+    archive = loadFile(archivename);
+    stat(archivename.c_str(), &vpkstat);
+  } catch (std::runtime_error &e) {
+    fuse_opt_free_args(&vpk_args);
+    std::cerr << "Failed to load archive: " << e.what() << std::endl;
+    return 1;
+  }
+
   std::cout << "FuseVPK starting filesystem" << std::endl;
-  fuse_main(vpk_args.argc, vpk_args.argv, &vpk_ops, nullptr);
+  //int fuseret = fuse_main(vpk_args.argc, vpk_args.argv, &vpk_ops, nullptr);
+
+  unloadFile(archive);
+  fuse_opt_free_args(&vpk_args);
 
   std::cout << "FuseVPK shutting down" << std::endl;
 }

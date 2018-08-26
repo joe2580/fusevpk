@@ -26,26 +26,24 @@ struct Path {
 
 // reference a vpk archive on disk
 struct VPKArchive {
-  std::string filepath;
+  std::string filepath;                   // filename of archive
 
+  size_t vpksize;                         // size of archive
+  void *vpkdata = NULL;                   // pointer to mmap
+  void *vpkarchivesection = NULL;         // pointer to archive section
 
+  bool split;                             // is archive split
+  int archives;                           // split into how many archives
+  void **archivedata;                     // pointers to archive mmaps
+  size_t *archivesizes;                   // size of archive mmaps
 
-  size_t vpksize;
-  void *vpkdata = NULL;
-  void *vpkarchivesection = NULL;
+  std::map<std::string, Path> paths;      // root of loaded directory tree
 
-  bool split;
-  int archives;
-  void **archivedata;
-  size_t *archivesizes;
-
-  std::map<std::string, Path> paths;
-
-  VPKHeader_v2 header;
-  int archivemd5count;
-  VPKArchiveMD5SectionEntry *archivemd5;
-  VPKOtherMD5Section othermd5;
-  VPKSignatureSection signature;
+  VPKHeader_v2 header;                    // copy of vpk header
+  int archivemd5count;                    // number of archive md5 entries
+  VPKArchiveMD5SectionEntry *archivemd5;  // location of archive md5 section
+  VPKOtherMD5Section othermd5;            // copy of othermd5 section
+//  VPKSignatureSection signature;          // should contain signature (unimplemented)
 };
 
 VPKArchive *loadFile(std::string filename);

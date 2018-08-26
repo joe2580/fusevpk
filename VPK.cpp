@@ -15,6 +15,7 @@
 
 #include "VPK.h"
 
+// reads a std::string from the given memory area, adjusting the pointer position
 std::string readString(char **character) {
   std::string token = "";
   while (**character != '\0') {
@@ -25,18 +26,20 @@ std::string readString(char **character) {
   return token;
 }
 
+// ask filesystem for size of file
 size_t getFileSize(std::string filename) {
   struct stat filestat;
   stat(filename.c_str(), &filestat);
   return filestat.st_size;
 }
 
-
+// check if std::string ends with other string
 bool endsWith(std::string const &value, std::string const &ending) {
   if (ending.size() > value.size()) return false;
   return std::equal(ending.rbegin(), ending.rend(), value.rbegin());
 }
 
+// template for splitting a string
 template<typename Out>
 void split(const std::string &s, char delim, Out result) {
     std::stringstream ss(s);
@@ -46,12 +49,14 @@ void split(const std::string &s, char delim, Out result) {
     }
 }
 
+// split string into vector of strings
 std::vector<std::string> split(const std::string &s, char delim) {
     std::vector<std::string> elems;
     split(s, delim, std::back_inserter(elems));
     return elems;
 }
 
+// return path in VPK archive, creating if neccecary
 Path *createPath(std::string path, VPKArchive *archive) {
   std::vector<std::string> pathparts = split(path, '/');
   Path *thispath;
@@ -73,6 +78,7 @@ Path *createPath(std::string path, VPKArchive *archive) {
   return thispath;
 }
 
+// return path in VPK archive, returns null if not found
 Path *findPath(std::string path, VPKArchive *archive) {
   std::vector<std::string> pathparts = split(path, '/');
   Path *thispath;
@@ -92,6 +98,7 @@ Path *findPath(std::string path, VPKArchive *archive) {
   return thispath;
 }
 
+// returns file in VPK archive, returns null if not found
 Entry *findFile(std::string path, VPKArchive *archive) {
   std::vector<std::string> pathparts = split(path, '/');
   Path *thispath;
@@ -116,10 +123,12 @@ Entry *findFile(std::string path, VPKArchive *archive) {
   }
 }
 
-bool isSplit(VPKDirectoryEntry *entry) {
-  return entry->PreloadBytes > 0 && entry->EntryLength > 0;
+// check if file is split across tree and archive
+bool isSplit(Entry *entry) {
+  return entry->entry->PreloadBytes > 0 && entry->entry->EntryLength > 0;
 }
 
+// utility method to read the archive data of an Entry
 void readArchive(VPKArchive *archive, Entry *entry, char *buffer, size_t size, off_t offset) {
   if (size+offset > entry->entry->EntryLength)
       throw std::runtime_error("Reading outside of file archive data");
@@ -131,6 +140,7 @@ void readArchive(VPKArchive *archive, Entry *entry, char *buffer, size_t size, o
   memcpy(buffer, readStart, size);
 }
 
+// utility method to read the preloaded tree data of an Entry
 void readPreload(Entry* entry, char *buffer, size_t size, off_t offset) {
   std::cout << "  preload read index: " << offset << " size: " << size << std::endl;
   if (size+offset > entry->entry->PreloadBytes)
@@ -140,6 +150,7 @@ void readPreload(Entry* entry, char *buffer, size_t size, off_t offset) {
   memcpy(buffer, readStart, size);
 }
 
+// read data from a file in a VPK archive, reading from preload and bulk archive data as needed
 int readFile(VPKArchive *archive, Entry *entry, char *buffer, size_t size, off_t offset) {
   int preloadsize = entry->entry->PreloadBytes;
   int archivesize = entry->entry->EntryLength;
@@ -164,29 +175,32 @@ int readFile(VPKArchive *archive, Entry *entry, char *buffer, size_t size, off_t
   }
 }
 
+// return the size in bytes of an entry
 int getSize(Entry* entry) {
   return entry->entry->PreloadBytes + entry->entry->EntryLength;
 }
 
+// load a VPK archive from disk
 VPKArchive *loadFile(std::string filename) {
 
-  bool split = endsWith(filename, "_dir.vpk");
-
   // mmap file
-  size_t vpksize = getFileSize(filename);
+  struct stat filestat;
+  stat(filename.c_str(), &filestat);
+  if (filestat.st_mode & S_IFDIR)
+    throw std::runtime_error("Tried to open directory");
+  size_t vpksize = filestat.st_size;
   int vpkfd = open(filename.c_str(), O_RDONLY,0);
-  if (vpkfd == -1) throw std::runtime_error("could not open file descriptor");
+  if (vpkfd < 0) throw std::runtime_error("could not open file descriptor");
   void* vpkdata = mmap(NULL, vpksize, PROT_READ, MAP_PRIVATE, vpkfd, 0);
 
   // load header from mmap
   VPKArchive *archive = new VPKArchive;
   archive->filepath = filename;
-  archive->split = split;
   archive->vpkdata = vpkdata;
   archive->vpksize = vpksize;
   archive->archivemd5 = nullptr;
-  archive->signature.Signature = nullptr;
-  archive->signature.PublicKey = nullptr;
+//  archive->signature.Signature = nullptr;
+//  archive->signature.PublicKey = nullptr;
   memcpy(&archive->header, vpkdata, sizeof(VPKHeader_v2));
 
   // check this is a version we can load
@@ -223,8 +237,11 @@ VPKArchive *loadFile(std::string filename) {
     }
   }
 
+  archive->archives = maxarchiveindex;
+
   // load archives
   if (maxarchiveindex >= 0) {
+    archive->split = true;
     archive->archivedata = new void*[maxarchiveindex+1];
     archive->archivesizes = new size_t[maxarchiveindex+1];
     std::string fileprefix = filename.substr(0, filename.size()-7);
@@ -234,7 +251,7 @@ VPKArchive *loadFile(std::string filename) {
       std::string archivefile = ss.str();
       std::cout << "loading archive: " << archivefile << std::endl;
       size_t archivesize = getFileSize(archivefile);
-      archive->archivesizes[i-1] = archivesize;
+      archive->archivesizes[i] = archivesize;
       int archivefd = open(archivefile.c_str(), O_RDONLY,0);
       if (archivefd == -1) {
         std::cerr << "Could not open file: " << archivefile << std::endl;
@@ -243,6 +260,8 @@ VPKArchive *loadFile(std::string filename) {
       void* archivedata = mmap(NULL, archivesize, PROT_READ, MAP_PRIVATE, archivefd, 0);
       archive->archivedata[i] = archivedata;
     }
+  } else {
+    archive->split = false;
   }
 
 
@@ -281,10 +300,16 @@ VPKArchive *loadFile(std::string filename) {
   return archive;
 }
 
+// unload an archive, freeing mmaps and allocated memory
 void unloadFile(VPKArchive* archive) {
   if (archive->vpkdata != NULL) munmap(archive->vpkdata, archive->vpksize);
-  if (archive->signature.Signature != NULL) delete archive->signature.Signature;
-  if (archive->signature.PublicKey != NULL) delete archive->signature.PublicKey;
-  if (archive->archivedata != NULL) delete archive->archivedata;
+  for (int i = 0; i <= archive->archives; i++)
+      munmap(archive->archivedata[i], archive->archivesizes[i]);
+//  if (archive->signature.Signature != NULL) delete archive->signature.Signature;
+//  if (archive->signature.PublicKey != NULL) delete archive->signature.PublicKey;
+  if (archive->split) {
+    delete[] archive->archivedata;
+    delete[] archive->archivesizes;
+  }
   delete archive;
 }
