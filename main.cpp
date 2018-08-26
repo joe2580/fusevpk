@@ -130,7 +130,7 @@ int main(int argc, char *argv[]) {
   }
 
   std::cout << "FuseVPK starting filesystem" << std::endl;
-  //int fuseret = fuse_main(vpk_args.argc, vpk_args.argv, &vpk_ops, nullptr);
+  int fuseret = fuse_main(vpk_args.argc, vpk_args.argv, &vpk_ops, nullptr);
 
   unloadFile(archive);
   fuse_opt_free_args(&vpk_args);
